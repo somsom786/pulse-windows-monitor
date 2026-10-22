@@ -48,3 +48,22 @@ through the user's existing ChatGPT login (no API key). Claude implements; Astra
 | Dedicated writer thread, `Result`-returning native queries, `Available Bytes` cross-check | **Deferred** – current design is correct for single-writer WAL; documented |
 
 **Validation:** typecheck + cargo check; live app re-run (see PROGRESS.md).
+
+## Checkpoint C+D — hardware integration, lifecycle, security audit
+
+**Why:** final audit before public release: sensors/WMI/NVML, window lifecycle, destructive actions, IPC trust.
+
+| Finding | Decision |
+|---|---|
+| `open_uri` command injection via `cmd /c start` | **Fixed** – fixed allowlist, `ShellExecuteW`, no shell |
+| Protected-path check bypass (`..`, junctions, Unicode slice panic) | **Fixed** – plain absolute paths only, canonicalized, both forms checked |
+| Scan-id path traversal on load/delete; arbitrary CSV destination | **Fixed** – hex ids only; export must end in `.csv`; CSP added |
+| Lock-order deadlock (`tree` vs `current_scan`) | **Fixed** – same order everywhere |
+| Terminate lacked OS critical-process check | **Fixed** – `IsProcessCritical` on the verified handle, fail closed |
+| Duplicate-job start race | **Fixed** – atomic check-and-set |
+| Elevation handle leak | **Fixed** – no process handle requested |
+| LHM HTTP read had no total deadline; stale sensors stayed "ok" | **Fixed** – 3 s deadline, 20 s freshness |
+| Unknown disk write errors rendered as 0 | **Fixed** |
+| Inventory WMI on runtime workers / STA-MTA mix, NVML on monitor thread, per-command Tauri capability scoping, signed/pinned LHM, job-state generations, bounded icon cache | **Deferred** – documented; low exposure for a local single-user app |
+
+Validation: cargo check, tsc, release build, app launch with CSP, Storage page renders.

@@ -137,6 +137,9 @@ pub fn clear_history(st: St) {
 
 #[tauri::command(async)]
 pub fn export_csv(st: St, from: i64, to: i64, path: String) -> R<usize> {
+    if !path.to_ascii_lowercase().ends_with(".csv") {
+        return Err("Export path must end in .csv".into());
+    }
     st.store.export_csv(from, to, &path)
 }
 
@@ -304,10 +307,12 @@ pub fn scan_open(st: St, id: String) -> R<scanner::ScanMeta> {
 #[tauri::command(async)]
 pub fn scan_delete(st: St, id: String) {
     scanner::delete_scan(&id);
+    // lock order: tree before current_scan (same as AppState::get_tree)
+    let mut tree = st.tree.lock();
     let mut cur = st.current_scan.lock();
     if cur.as_deref() == Some(id.as_str()) {
         *cur = None;
-        *st.tree.lock() = None;
+        *tree = None;
         *st.overview.lock() = None;
     }
 }
@@ -403,11 +408,14 @@ pub fn storage_diff(a: String, b: String) -> R<analysis::Diff> {
 #[tauri::command(async)]
 pub fn dup_start(st: St, app: tauri::AppHandle, min_size_mb: Option<u64>) -> R<()> {
     let t = st.get_tree()?;
-    if st.dup_cancel.lock().is_some() {
-        return Err("A duplicate scan is already running".into());
-    }
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    *st.dup_cancel.lock() = Some(cancel.clone());
+    {
+        let mut slot = st.dup_cancel.lock();
+        if slot.is_some() {
+            return Err("A duplicate scan is already running".into());
+        }
+        *slot = Some(cancel.clone());
+    }
     *st.dup_result.lock() = None;
     let state: Arc<AppState> = st.inner().clone();
     let min = min_size_mb.unwrap_or(1).max(1) * 1024 * 1024;

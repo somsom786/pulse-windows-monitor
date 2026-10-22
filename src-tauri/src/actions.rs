@@ -35,10 +35,16 @@ pub fn open_path(path: &str) -> Result<(), String> {
 }
 
 pub fn open_uri(uri: &str) -> Result<(), String> {
-    if !(uri.starts_with("ms-settings:") || uri == "cleanmgr" || uri == "taskmgr") {
-        return Err("Unsupported target".into());
-    }
-    std::process::Command::new("cmd").raw_arg(format!("/c start \"\" \"{}\"", uri)).creation_flags(0x08000000).spawn().map(|_| ()).map_err(|e| e.to_string())
+    // fixed allowlist; never interpolated into a shell command line
+    let target = match uri {
+        "ms-settings:storagesense" | "ms-settings:appsfeatures" => uri,
+        "cleanmgr" => "cleanmgr.exe",
+        "taskmgr" => "taskmgr.exe",
+        _ => return Err("Unsupported target".into()),
+    };
+    let w = wide(target);
+    let r = unsafe { ShellExecuteW(None, PCWSTR::null(), PCWSTR(w.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOW) };
+    if r.0 as isize > 32 { Ok(()) } else { Err("Windows could not open that target".into()) }
 }
 
 pub fn show_properties(path: &str) -> Result<(), String> {
@@ -58,8 +64,25 @@ pub fn show_properties(path: &str) -> Result<(), String> {
 
 /// Locations that must never be offered for removal through PULSE.
 pub fn is_protected(path: &str) -> Option<&'static str> {
-    let p = path.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
-    if p.len() <= 2 {
+    let raw = path.replace('/', "\\");
+    let b = raw.as_bytes();
+    // must be an absolute drive path (C:\...), with no relative components
+    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' || raw.split('\\').any(|c| c == ".." || c == ".") || raw.contains('\0') {
+        return Some("not a plain absolute path");
+    }
+    // resolve junctions/symlinks/short names when the target exists
+    let resolved = std::fs::canonicalize(&raw).ok().map(|p| p.to_string_lossy().trim_start_matches("\\\\?\\").to_string());
+    for candidate in std::iter::once(raw.clone()).chain(resolved) {
+        if let Some(why) = is_protected_norm(&candidate) {
+            return Some(why);
+        }
+    }
+    None
+}
+
+fn is_protected_norm(path: &str) -> Option<&'static str> {
+    let p = path.trim_end_matches('\\').to_ascii_lowercase();
+    if p.len() <= 2 || !p.is_char_boundary(2) {
         return Some("a drive root");
     }
     let win = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
@@ -91,6 +114,9 @@ pub fn is_protected(path: &str) -> Option<&'static str> {
 
 /// Move paths to the Recycle Bin (reversible). Windows warns if an item is too large and would be deleted permanently.
 pub fn recycle(paths: &[String]) -> Result<usize, String> {
+    if paths.is_empty() {
+        return Err("Nothing selected".into());
+    }
     for p in paths {
         if let Some(why) = is_protected(p) {
             return Err(format!("Refusing to remove {}: it is {}.", p, why));
@@ -242,7 +268,7 @@ pub fn launch_elevated(exe: &std::path::Path) -> Result<(), String> {
     let verb = wide("runas");
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS,
+        fMask: 0,
         lpVerb: PCWSTR(verb.as_ptr()),
         lpFile: PCWSTR(w.as_ptr()),
         lpDirectory: PCWSTR(dir.as_ptr()),
@@ -259,7 +285,7 @@ pub fn relaunch_elevated() -> Result<(), String> {
     let verb = wide("runas");
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS,
+        fMask: 0,
         lpVerb: PCWSTR(verb.as_ptr()),
         lpFile: PCWSTR(w.as_ptr()),
         nShow: SW_SHOW.0,

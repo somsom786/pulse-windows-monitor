@@ -276,6 +276,13 @@ pub fn terminate_checked(pid: u32, expected_create: u64) -> Result<(), String> {
         let got = GetProcessTimes(h, &mut c, &mut x, &mut k, &mut u);
         let result = match got {
             Ok(()) => {
+                // refuse OS-critical processes (terminating one bugchecks the machine); fail closed if unverifiable
+                let mut critical = windows::core::BOOL(1);
+                let verified = IsProcessCritical(h, &mut critical).is_ok();
+                if !verified || critical.as_bool() {
+                    let _ = CloseHandle(h);
+                    return Err("This is a critical Windows process and cannot be ended.".to_string());
+                }
                 let created = ((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64;
                 if created != expected_create {
                     Err("That PID now belongs to a different process; refresh and try again.".to_string())

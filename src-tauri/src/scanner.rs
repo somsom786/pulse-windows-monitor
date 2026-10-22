@@ -648,7 +648,14 @@ pub fn save_tree(tree: &ScanTree) -> std::io::Result<()> {
     Ok(())
 }
 
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 pub fn load_tree(id: &str) -> Result<ScanTree, String> {
+    if !valid_id(id) {
+        return Err("Invalid scan id".into());
+    }
     let path = scans_dir().join(format!("{}.scan", id));
     let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let dec = lz4_flex::frame::FrameDecoder::new(std::io::BufReader::with_capacity(1 << 20, f));
@@ -668,6 +675,9 @@ fn write_index(v: &[ScanMeta]) -> std::io::Result<()> {
 }
 
 pub fn delete_scan(id: &str) {
+    if !valid_id(id) {
+        return;
+    }
     let _ = std::fs::remove_file(scans_dir().join(format!("{}.scan", id)));
     let mut idx = list_meta();
     idx.retain(|m| m.id != id);

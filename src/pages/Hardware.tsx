@@ -175,7 +175,7 @@ export function Hardware() {
                   <Row l="Temperature">{d.temperature != null ? temp(d.temperature, unit) : <Badge tone="warn" >{d.reliabilityStatus.includes("admin") ? "Needs elevation" : "Not reported"}</Badge>}</Row>
                   <Row l="Power-on hours">{d.powerOnHours != null ? num(d.powerOnHours) : "—"}</Row>
                   <Row l="Wear">{d.wear != null ? d.wear + "%" : "—"}</Row>
-                  <Row l="Read / write errors">{d.readErrors != null ? `${num(d.readErrors)} / ${num(d.writeErrors ?? 0)}` : "—"}</Row>
+                  <Row l="Read / write errors">{d.readErrors != null ? `${num(d.readErrors)} / ${d.writeErrors != null ? num(d.writeErrors) : "—"}` : "—"}</Row>
                   {d.temperature == null && d.powerOnHours == null && <div className="text-[11.5px] text-faint mt-1">{d.reliabilityStatus}</div>}
                 </div>
               );

@@ -77,7 +77,18 @@ fn read_lhm_http() -> Option<(String, Vec<HwSensor>)> {
     s.set_write_timeout(Some(Duration::from_millis(500))).ok()?;
     s.write_all(b"GET /data.json HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").ok()?;
     let mut buf = Vec::new();
-    s.take(4 << 20).read_to_end(&mut buf).ok()?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut chunk = [0u8; 16384];
+    loop {
+        if Instant::now() > deadline || buf.len() > (4 << 20) {
+            return None;
+        }
+        match s.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(_) => return None,
+        }
+    }
     let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
     let head = String::from_utf8_lossy(&buf[..split]).to_ascii_lowercase();
     if !head.starts_with("http/1.1 200") && !head.starts_with("http/1.0 200") {
@@ -210,7 +221,7 @@ impl SensorHub {
     /// Best CPU temperature candidate with its provenance.
     pub fn cpu_temp(&self) -> Option<(f64, String)> {
         let d = self.data.lock();
-        if d.status != "ok" {
+        if d.status != "ok" || crate::monitor::now_ms().saturating_sub(d.updated_ms) > 20_000 {
             return None;
         }
         let cpu_temps: Vec<&HwSensor> = d.sensors.iter().filter(|s| s.kind == "Temperature" && (s.identifier.contains("cpu") || s.parent.to_lowercase().contains("cpu"))).collect();
@@ -224,7 +235,7 @@ impl SensorHub {
 
     pub fn cpu_power(&self) -> Option<(f64, String)> {
         let d = self.data.lock();
-        if d.status != "ok" {
+        if d.status != "ok" || crate::monitor::now_ms().saturating_sub(d.updated_ms) > 20_000 {
             return None;
         }
         d.sensors.iter().find(|s| s.kind == "Power" && (s.identifier.contains("cpu")) && (s.name.contains("Package"))).map(|s| (s.value, format!("{}: {}", d.source, s.name)))
