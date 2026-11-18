@@ -1,36 +1,58 @@
-# PULSE — local Windows system intelligence
+# PULSE
 
-Tauri 2 (Rust) + React/TypeScript/Tailwind + ECharts. Everything is local: no network calls, accounts or telemetry.
+PULSE is a local Windows system monitor for finding what occupies disk space and investigating when CPU, memory, or GPU usage changed.
 
-## License
-MIT. Forks and contributions welcome.
-
-## Run / build
-```powershell
-npm install
-npm run tauri dev        # development (Rust + Vite hot reload)
-npm run tauri build      # release exe + NSIS installer
-```
-Outputs: `src-tauri/target/release/pulse.exe` and `src-tauri/target/release/bundle/nsis/PULSE_0.1.0_x64-setup.exe`.
-Requires Node 20+, Rust (MSVC toolchain), WebView2 (included in Windows 11).
-Checks: `npm run typecheck`, `cargo check` in `src-tauri`. Dev examples: `cargo run --release --example scantest -- C:\`, `--example teltest`.
+![PULSE Storage Explorer showing a real NTFS scan of seven synthetic files, grouped in a treemap](docs/media/storage-explorer.png)
 
 ## What it does
-- **Storage Explorer** – parallel NTFS scanner (≈20 s warm / 78 s cold for 6 M files), zoomable treemap, allocated vs logical size, filters, largest files/folders, file types, cleanup locations, installed apps, old installers, duplicate finder, growth between saved scans, coverage report. Actions: Explorer, properties, copy path, rescan, Recycle Bin (confirmed, protected paths refused). Scans are saved in `%APPDATA%\PULSE\scans`.
-- **Processes & Memory** – Windows memory composition (in use / modified / standby / free, commit, pagefile, kernel pools), live process table (private WS, WS, commit, CPU, GPU %, VRAM, I/O, grouping, icons), spike investigation (click the history chart → processes at that moment, growth attribution with an "unexplained" residual, peaks, sustained-growth observations), guarded process termination.
-- **Overview, Hardware, History, Settings** – live cards, "Needs attention" (measured facts only), NVML GPU telemetry, drives/adapters, sensor status table, CSV export, alerts with cooldowns, tray, launch at sign-in.
 
-## Performance (release build, this PC, measured)
-- `pulse.exe` (sampler + recorder): ~60 MB working set / 32 MB private, ~1% of one core, one sample ≈ 25 ms every 2 s.
-- With the window open the WebView2 tree adds ~300–400 MB private and 1–5% of one core (Overview is the heaviest page).
-- Closing the window to the tray **destroys the WebView**; monitoring and recording continue at ~60 MB.
-- Full-drive scan tree: ~56 B/node (≈0.4 GB for 7 M nodes) in RAM only while in use; unloaded after 5 idle minutes. History DB is bounded by retention (default 7 days).
+- **Storage Explorer** scans a folder or volume on demand. Drill into the treemap, switch between allocated and logical size, filter results, and reopen saved scans. The coverage view reports paths the scanner could not read.
+- **Processes & Memory** shows process working sets, commit, CPU and available GPU measurements alongside Windows memory composition. Recorded snapshots help explain which processes grew around a spike.
+- **History** records samples in a local SQLite database, with configurable retention, timeline inspection and CSV export. Live monitoring can be paused from any view.
 
-## Limitations / unsupported
-- CPU/motherboard temperatures, fan RPM and CPU power need a kernel driver. PULSE reads them from **LibreHardwareMonitor** when it runs as administrator with *Options → Remote Web Server → Run* (loopback :8085). This integration is implemented but **not yet verified against live LHM data** on this PC (it needs a UAC approval). Otherwise these show "Needs elevation / driver".
-- GPU hotspot temperature is not exposed by NVML for GeForce. Per-process network usage needs elevated ETW and is not collected.
-- Process "I/O rate" is Windows I/O counters (files, pipes, network), not only disk.
-- Directory-reported allocation can differ from physical use for compressed/sparse/deduplicated files; MFT-resident files and alternate streams are not itemised.
-- Unelevated scans skip folders Windows denies (reported in the Coverage tab).
+## Architecture
 
-See `PROGRESS.md` and `ENGINEERING_REVIEWS.md`.
+Windows APIs provide filesystem and telemetry data to a Rust core. The core owns sampling, scan jobs, persistence and system actions. Tauri commands and events connect it to a React and TypeScript interface. ECharts renders time series and the storage view uses a zoomable treemap.
+
+```mermaid
+flowchart LR
+  Windows["Windows APIs and NTFS"] --> Rust["Rust sampler and scanner"]
+  Rust --> Local["SQLite history and saved scans"]
+  Rust <-->|"Tauri commands and events"| UI["React and TypeScript"]
+```
+
+## Run on Windows
+
+Use Windows with WebView2, a Vite-compatible Node.js version (20.19+, 22.12+, or newer supported releases, verified on 26.13.1), and the Rust MSVC toolchain with the Visual Studio C++ build tools and Windows SDK.
+
+```powershell
+npm ci
+npm run tauri -- build --debug --no-bundle
+.\src-tauri\target\debug\pulse.exe
+```
+
+Open **Storage Explorer → Scan a folder** and choose a directory. In **Processes & Memory**, check that live values update. **History** begins filling as the app runs. Settings, history and scans are stored under `%APPDATA%\PULSE`.
+
+## Verification
+
+```powershell
+npm run build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+The TypeScript/Vite build and Rust debug build passed. The Rust test target compiled with zero tests. The native WebView2 run scanned an NTFS fixture containing seven files across five child folders, checked the saved scan count, switched to logical size and drilled into a child folder. It also observed advancing timestamps, a rendered history chart, a nonempty process list, and working pause/resume.
+
+The seven-file scan reached the first expected rows in about 20 ms on the verification machine, measured from the native scan request to the rendered row on one warm rerun. This fixture checks end-to-end behavior. It gives no throughput estimate for a full volume.
+
+<details>
+<summary>Recorded telemetry in the native app</summary>
+
+![PULSE History showing CPU, memory, temperatures and throughput recorded on the same Windows machine](docs/media/history.png)
+
+</details>
+
+## Status and limitations
+
+PULSE is an early Windows desktop project. Windows permissions can limit scan coverage. Logical byte counts can differ from allocated storage, and the process I/O counter includes more than disk traffic. Some board sensors require an elevated LibreHardwareMonitor process on loopback. This verification covered read-only workflows at standard permissions. It did not cover elevated sensor collection, process termination, recycling files, or release installer behavior.
+
+The project is [MIT licensed](LICENSE). For engineering context and remaining work, see the [progress log](PROGRESS.md) and [review notes](ENGINEERING_REVIEWS.md).
